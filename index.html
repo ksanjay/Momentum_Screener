@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quant Momentum Screener | QMOM + FIP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --text-main: #c9d1d9;
+            --accent: #58a6ff;
+            --success: #238636;
+            --danger: #da3633;
+            --border: #30363d;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
+            font-size: 14px;
+        }
+
+        .quant-panel {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
+        .btn-quant {
+            background-color: var(--success);
+            color: white;
+            border: 1px solid rgba(240, 246, 252, 0.1);
+            transition: all 0.2s;
+        }
+
+        .btn-quant:hover {
+            background-color: #2ea043;
+        }
+
+        .btn-quant:disabled {
+            background-color: #238636;
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        th {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            color: #8b949e;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover {
+            background-color: #21262d;
+        }
+
+        /* Loading Bar */
+        .progress-container {
+            width: 100%;
+            background-color: var(--border);
+            height: 4px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .progress-bar {
+            height: 4px;
+            background-color: var(--accent);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .metric-good { color: var(--success); }
+        .metric-bad { color: var(--danger); }
+        .metric-neutral { color: #8b949e; }
+
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center">
+            <div>
+                <h1 class="text-2xl font-bold text-white mb-2"><i class="fa-solid fa-chart-line mr-2"></i>Quant Momentum Screener</h1>
+                <p class="text-gray-500 text-xs">Methodology: 12-1 Month Momentum + Frog-in-the-Pan (Information Discreteness)</p>
+            </div>
+            <div class="mt-4 md:mt-0 flex gap-2">
+                <div class="text-xs text-right mr-4 text-gray-500">
+                    <div><span id="api-status">APIs Ready</span></div>
+                    <div>Batch Size: <span id="batch-display">50</span></div>
+                </div>
+                <button onclick="startScreening()" id="scanBtn" class="btn-quant px-4 py-2 rounded font-bold shadow-lg">
+                    <i class="fa-solid fa-radar mr-2"></i>RUN SCREENER
+                </button>
+            </div>
+        </div>
+
+        <!-- Dashboard Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+            <!-- Stats -->
+            <div class="quant-panel p-4 lg:col-span-1">
+                <h3 class="text-xs text-gray-500 uppercase mb-4">Scan Status</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between">
+                        <span>Universe Scanned:</span>
+                        <span id="stat-scanned" class="font-bold text-white">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Passing Filters:</span>
+                        <span id="stat-passed" class="font-bold text-white">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>API Errors:</span>
+                        <span id="stat-errors" class="text-red-400">0</span>
+                    </div>
+                </div>
+                <div class="progress-container" id="progressContainer">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div id="status-msg" class="text-xs text-gray-400 mt-2 h-4 overflow-hidden text-ellipsis whitespace-nowrap">Ready to scan...</div>
+            </div>
+
+            <!-- Methodology Explanation -->
+            <div class="quant-panel p-4 lg:col-span-3">
+                <h3 class="text-xs text-gray-500 uppercase mb-2">Strategy Logic</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-400">
+                    <div class="border-l-2 border-blue-500 pl-3">
+                        <strong class="text-white block mb-1">1. Universe</strong>
+                        Selects top US stocks by Market Cap (> $10B) to ensure liquidity. Excluding Financials/REITs is optional but recommended in QMOM.
+                    </div>
+                    <div class="border-l-2 border-green-500 pl-3">
+                        <strong class="text-white block mb-1">2. 12-1 Momentum</strong>
+                        Cumulative return from month t-12 to t-1. Skips the most recent month to avoid short-term reversals.
+                    </div>
+                    <div class="border-l-2 border-purple-500 pl-3">
+                        <strong class="text-white block mb-1">3. Frog in the Pan (ID)</strong>
+                        Measures momentum quality. <code>ID = Sign(Ret) * (%Neg - %Pos)</code>. 
+                        <br>Low ID = Continuous/Smooth (Better). High ID = Discrete/Jumpy (Worse).
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="quant-panel overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="w-16">Rank</th>
+                            <th>Ticker</th>
+                            <th>Name</th>
+                            <th class="text-right">Price</th>
+                            <th class="text-right">12-1 Mo (%)</th>
+                            <th class="text-right">ID Score</th>
+                            <th class="text-right">ID Quality</th>
+                            <th class="text-center">Trend</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody">
+                        <tr>
+                            <td colspan="8" class="text-center text-gray-500 py-12">
+                                Click "RUN SCREENER" to begin analysis. <br>
+                                <span class="text-xs opacity-50">Note: Browser-based fetching is rate-limited. Be patient.</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- Configuration & State ---
+    const API_KEYS = {
+        polygon: "aPrpjpQGVHRBRiFrccExaq023xyhKq_7",
+        fmp: "zZ5zECyopZEcPtKvkqlb1R52jv2vFusj",
+        finnhub: "d22igc9r01qr7ajlkob0d22igc9r01qr7ajlkobg",
+        alphaVantage: "JQQUUJQRAX8TLXSM",
+        marketstack: "adc91e9b5f1decaabf6d74dc20a4416f"
+    };
+
+    // Configuration
+    const CONFIG = {
+        minMarketCap: 10000000000, // $10B for liquidity/large cap
+        limit: 50, // How many stocks to fetch details for (Rate Limit Protection)
+        lookbackDays: 300, // Enough for 12 months (approx 252 trading days)
+        skipRecentDays: 21, // Approx 1 month
+        formationPeriod: 252 // Approx 12 months
+    };
+
+    let state = {
+        isScanning: false,
+        stocksScanned: 0,
+        stocksPassed: 0,
+        errors: 0,
+        results: []
+    };
+
+    // --- Core Logic ---
+
+    async function startScreening() {
+        if (state.isScanning) return;
+        
+        // Reset State
+        state = { isScanning: true, stocksScanned: 0, stocksPassed: 0, errors: 0, results: [] };
+        updateUI();
+        document.getElementById('resultsTableBody').innerHTML = '<tr><td colspan="8" class="text-center py-8"><i class="fa-solid fa-circle-notch fa-spin text-accent text-2xl"></i><div class="mt-2 text-xs text-gray-500">Fetching Universe...</div></td></tr>';
+        document.getElementById('progressContainer').style.display = 'block';
+
+        try {
+            updateStatus("Fetching Universe from FMP...");
+            const universe = await fetchUniverse();
+            
+            updateStatus(`Found ${universe.length} candidates. Fetching history...`);
+            
+            // Process in chunks to avoid overwhelming APIs/Browser
+            const CHUNK_SIZE = 5;
+            for (let i = 0; i < universe.length; i += CHUNK_SIZE) {
+                const chunk = universe.slice(i, i + CHUNK_SIZE);
+                
+                await Promise.all(chunk.map(async (stock) => {
+                    try {
+                        const history = await fetchStockHistoryWithFallback(stock.symbol);
+                        if (history && history.length > 200) {
+                            const metrics = calculateMetrics(history);
+                            
+                            // Basic Filter: Positive Momentum
+                            if (metrics.momentum12_1 > 0) {
+                                state.results.push({
+                                    symbol: stock.symbol,
+                                    name: stock.companyName,
+                                    price: stock.price,
+                                    ...metrics
+                                });
+                                state.stocksPassed++;
+                            }
+                        } else {
+                            // console.warn(`Insufficient data for ${stock.symbol}`);
+                        }
+                    } catch (e) {
+                        console.error(`Error processing ${stock.symbol}:`, e);
+                        state.errors++;
+                    }
+                    state.stocksScanned++;
+                    updateUI(universe.length);
+                }));
+
+                // Rate limiting delay between chunks
+                await new Promise(r => setTimeout(r, 1500)); 
+            }
+
+            // Final Sort: QMOM logic says filter by Momentum (e.g. top decile) then sort by ID
+            // Here we sort by 12-1 Momentum primarily, but you can toggle logic
+            state.results.sort((a, b) => b.momentum12_1 - a.momentum12_1);
+            
+            // Take top 50% momentum, then sort by ID (smoothness)
+            // const topHalf = state.results.slice(0, Math.floor(state.results.length / 2));
+            // topHalf.sort((a, b) => a.idScore - b.idScore); // Lower ID is better
+            
+            renderResults();
+            updateStatus("Screening Complete.");
+
+        } catch (error) {
+            console.error("Critical Error:", error);
+            updateStatus("Error: " + error.message);
+            document.getElementById('resultsTableBody').innerHTML = `<tr><td colspan="8" class="text-center text-red-500 py-8">Error: ${error.message}</td></tr>`;
+        } finally {
+            state.isScanning = false;
+            document.getElementById('scanBtn').disabled = false;
+            document.getElementById('scanBtn').innerHTML = '<i class="fa-solid fa-radar mr-2"></i>RUN SCREENER';
+        }
+    }
+
+    // --- Data Fetching ---
+
+    async function fetchUniverse() {
+        // Use FMP Screener to get liquid stocks
+        const url = `https://financialmodelingprep.com/api/v3/stock-screener?marketCapMoreThan=${CONFIG.minMarketCap}&isEtf=false&country=US&exchange=NYSE,NASDAQ&limit=${CONFIG.limit}&apikey=${API_KEYS.fmp}`;
+        
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("FMP Universe fetch failed");
+            const data = await response.json();
+            return data;
+        } catch (e) {
+            // Fallback: Hardcoded list of popular liquid stocks if API fails entirely
+            console.warn("Universe fetch failed, using fallback list.");
+            return [
+                {symbol: 'AAPL', companyName: 'Apple Inc', price: 0},
+                {symbol: 'MSFT', companyName: 'Microsoft', price: 0},
+                {symbol: 'NVDA', companyName: 'Nvidia', price: 0},
+                {symbol: 'AMZN', companyName: 'Amazon', price: 0},
+                {symbol: 'GOOGL', companyName: 'Alphabet', price: 0},
+                {symbol: 'META', companyName: 'Meta', price: 0},
+                {symbol: 'TSLA', companyName: 'Tesla', price: 0},
+                {symbol: 'AMD', companyName: 'AMD', price: 0},
+                {symbol: 'NFLX', companyName: 'Netflix', price: 0},
+                {symbol: 'JPM', companyName: 'JPMorgan', price: 0}
+            ];
+        }
+    }
+
+    async function fetchStockHistoryWithFallback(symbol) {
+        // Strategy: FMP -> Polygon -> AlphaVantage
+        
+        // 1. Try FMP (Historical Price Full)
+        try {
+            const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?from=${getDateString(400)}&to=${getDateString(0)}&apikey=${API_KEYS.fmp}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.historical && data.historical.length > 0) {
+                // FMP returns newest first
+                return data.historical.reverse().map(d => ({ date: d.date, close: d.adjClose || d.close }));
+            }
+        } catch (e) { console.log(`FMP failed for ${symbol}`); }
+
+        // 2. Try Polygon
+        try {
+            const url = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${getDateString(400)}/${getDateString(0)}?adjusted=true&sort=asc&apiKey=${API_KEYS.polygon}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.results && data.results.length > 0) {
+                return data.results.map(d => ({ date: new Date(d.t).toISOString().split('T')[0], close: d.c }));
+            }
+        } catch (e) { console.log(`Polygon failed for ${symbol}`); }
+
+        // 3. Try AlphaVantage (Very slow, likely to hit limits)
+        try {
+            const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${symbol}&apikey=${API_KEYS.alphaVantage}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const ts = data['Time Series (Daily)'];
+            if (ts) {
+                return Object.keys(ts).sort().map(date => ({
+                    date: date,
+                    close: parseFloat(ts[date]['5. adjusted close'])
+                }));
+            }
+        } catch (e) { console.log(`AlphaVantage failed for ${symbol}`); }
+
+        return null;
+    }
+
+    // --- Calculations ---
+
+    function calculateMetrics(history) {
+        if (history.length < 252) return { momentum12_1: 0, idScore: 0 };
+
+        // 12-1 Momentum Logic
+        // t-1 (Recent): Skip last ~21 trading days (1 month)
+        // t-12 (Start): Approx 252 trading days ago
+        
+        const endIndex = history.length - 22; // Exclude last month
+        const startIndex = Math.max(0, endIndex - 252);
+        
+        if (endIndex < 0) return { momentum12_1: 0, idScore: 0 };
+
+        const priceRecent = history[endIndex].close;
+        const priceStart = history[startIndex].close;
+        
+        const momentum12_1 = ((priceRecent / priceStart) - 1) * 100;
+
+        // Frog in the Pan (ID) Logic
+        // ID = Sign(PastReturn) * (%Neg - %Pos)
+        // We calculate daily returns over the formation period (startIndex to endIndex)
+        
+        let positiveDays = 0;
+        let negativeDays = 0;
+        let totalDays = 0;
+
+        for (let i = startIndex + 1; i <= endIndex; i++) {
+            const dailyRet = (history[i].close / history[i - 1].close) - 1;
+            if (dailyRet > 0) positiveDays++;
+            else if (dailyRet < 0) negativeDays++;
+            totalDays++;
+        }
+
+        const pctPos = positiveDays / totalDays;
+        const pctNeg = negativeDays / totalDays;
+        
+        const signPret = Math.sign(momentum12_1);
+        // ID Formula from Da, Gurun, Warachka (2014)
+        const idScore = signPret * (pctNeg - pctPos);
+
+        return {
+            momentum12_1,
+            idScore
+        };
+    }
+
+    // --- UI Helpers ---
+
+    function updateUI(total) {
+        const percent = total ? Math.round((state.stocksScanned / total) * 100) : 0;
+        document.getElementById('progressBar').style.width = `${percent}%`;
+        document.getElementById('stat-scanned').innerText = state.stocksScanned;
+        document.getElementById('stat-passed').innerText = state.stocksPassed;
+        document.getElementById('stat-errors').innerText = state.errors;
+        
+        const btn = document.getElementById('scanBtn');
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin mr-2"></i>Scanning...`;
+    }
+
+    function updateStatus(msg) {
+        document.getElementById('status-msg').innerText = msg;
+    }
+
+    function renderResults() {
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = '';
+
+        if (state.results.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center py-8">No stocks passed the criteria.</td></tr>';
+            return;
+        }
+
+        // Apply visual ranking logic
+        // We separate high momentum results into "High Quality" (Low ID) and "Low Quality" (High ID)
+        
+        state.results.forEach((stock, index) => {
+            const tr = document.createElement('tr');
+            
+            // Determine Quality Badge
+            // ID < 0 usually means Continuous (Good for Winners). ID > 0 means Discrete (Bad for Winners).
+            let qualityHtml = '';
+            if (stock.idScore < -0.2) {
+                qualityHtml = '<span class="px-2 py-1 rounded bg-green-900 text-green-200 text-xs font-bold">SMOOTH</span>';
+            } else if (stock.idScore > 0.2) {
+                qualityHtml = '<span class="px-2 py-1 rounded bg-red-900 text-red-200 text-xs font-bold">DISCRETE</span>';
+            } else {
+                qualityHtml = '<span class="px-2 py-1 rounded bg-gray-700 text-gray-300 text-xs">MIXED</span>';
+            }
+
+            // Trend Icon
+            const trendIcon = stock.momentum12_1 > 20 
+                ? '<i class="fa-solid fa-arrow-trend-up text-green-500"></i>' 
+                : '<i class="fa-solid fa-minus text-gray-500"></i>';
+
+            tr.innerHTML = `
+                <td class="font-mono text-gray-500">#${index + 1}</td>
+                <td class="font-bold text-accent"><a href="https://finance.yahoo.com/quote/${stock.symbol}" target="_blank" class="hover:underline">${stock.symbol}</a></td>
+                <td class="truncate max-w-xs text-gray-400">${stock.name}</td>
+                <td class="text-right font-mono">$${stock.price.toFixed(2)}</td>
+                <td class="text-right font-mono ${stock.momentum12_1 > 0 ? 'text-green-400' : 'text-red-400'}">${stock.momentum12_1.toFixed(2)}%</td>
+                <td class="text-right font-mono">${stock.idScore.toFixed(3)}</td>
+                <td class="text-right">${qualityHtml}</td>
+                <td class="text-center">${trendIcon}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function getDateString(daysBack) {
+        const date = new Date();
+        date.setDate(date.getDate() - daysBack);
+        return date.toISOString().split('T')[0];
+    }
+
+</script>
+</body>
+</html>
